@@ -17,7 +17,7 @@
 
 ## 快速开始
 
-要求 Python 3.10+。
+要求 Python 3.9+。
 
 ```bash
 python -m venv .venv
