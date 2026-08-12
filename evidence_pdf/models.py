@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass
 
 
-@dataclass(slots=True)
+@dataclass
 class DocumentMeta:
     company: str
     language: str
@@ -10,13 +10,13 @@ class DocumentMeta:
     source_filename: str
 
 
-@dataclass(slots=True)
+@dataclass
 class PageText:
     page_number: int
     text: str
 
 
-@dataclass(slots=True)
+@dataclass
 class Evidence:
     index: int
     company: str
