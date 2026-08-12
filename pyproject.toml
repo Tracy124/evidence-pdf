@@ -1,0 +1,15 @@
+[project]
+name = "evidence-pdf"
+version = "0.1.0"
+description = "Explainable evidence extraction from legal and financial PDFs"
+requires-python = ">=3.10"
+dependencies = [
+  "streamlit>=1.36,<2",
+  "pypdf>=4.2,<7",
+  "openpyxl>=3.1,<4",
+  "python-docx>=1.1,<2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
