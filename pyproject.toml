@@ -1,6 +1,6 @@
 [project]
 name = "evidence-pdf"
-version = "0.1.0"
+version = "0.2.0"
 description = "Explainable evidence extraction from legal and financial PDFs"
 requires-python = ">=3.9"
 dependencies = [
