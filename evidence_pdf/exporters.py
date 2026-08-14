@@ -4,7 +4,11 @@ from io import BytesIO, StringIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from docx import Document
-from docx.shared import Pt
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt, RGBColor
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -15,11 +19,13 @@ from .models import Evidence
 
 COLUMNS = [
     ("index", "序号"), ("company", "企业名称"), ("indicator", "指标"),
-    ("value_candidate", "数值候选（待复核）"), ("source_filename", "来源文件名"),
-    ("page_number", "页码"), ("language", "语种"), ("year", "年份"),
+    ("value_candidate", "数值候选（待复核）"), ("currency", "币种（原文）"),
+    ("amount_unit", "金额单位（原文）"), ("value_year", "数值所属年份"),
+    ("source_filename", "来源文件名"), ("page_number", "页码"),
+    ("language", "语种"), ("year", "报告年份"),
     ("document_type", "原文件类型"), ("matched_terms", "命中词"),
     ("score", "匹配分"), ("excerpt", "证据片段"),
-    ("evidence_filename", "证据文件名"),
+    ("evidence_filename", "证据文件名"), ("review_status", "复核状态"),
 ]
 
 
@@ -48,7 +54,7 @@ def build_excel(results: list[Evidence]) -> bytes:
         ws.append([record[key] for key, _ in COLUMNS])
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
-    widths = [8, 18, 30, 22, 28, 8, 10, 10, 16, 24, 10, 70, 42]
+    widths = [8, 22, 18, 22, 16, 18, 14, 28, 8, 10, 12, 16, 24, 10, 70, 42, 14]
     for idx, width in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(idx)].width = width
     for row in ws.iter_rows(min_row=2):
@@ -61,24 +67,73 @@ def build_excel(results: list[Evidence]) -> bytes:
 
 def build_word(results: list[Evidence]) -> bytes:
     doc = Document()
-    styles = doc.styles
-    styles["Normal"].font.name = "Arial"
-    styles["Normal"].font.size = Pt(10)
-    doc.add_heading("PDF 证据提取结果", level=0)
-    doc.add_paragraph("说明：数值为自动识别候选，正式使用前请结合证据页人工复核。")
+    section = doc.sections[0]
+    section.top_margin = section.bottom_margin = Inches(0.8)
+    section.left_margin = section.right_margin = Inches(0.9)
+
+    def set_font(run, size=10, bold=False, color=None):
+        run.font.name = "Arial Unicode MS"
+        run.font.size = Pt(size)
+        run.bold = bold
+        if color:
+            run.font.color.rgb = RGBColor(*color)
+        run._element.get_or_add_rPr().rFonts.set(qn("w:ascii"), "Arial Unicode MS")
+        run._element.get_or_add_rPr().rFonts.set(qn("w:hAnsi"), "Arial Unicode MS")
+        run._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"), "Arial Unicode MS")
+
+    normal = doc.styles["Normal"]
+    normal.font.name = "Arial Unicode MS"
+    normal.font.size = Pt(10)
+    normal._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"), "Arial Unicode MS")
+
+    title = doc.add_paragraph()
+    title.paragraph_format.space_after = Pt(6)
+    set_font(title.add_run("PDF 证据提取结果"), size=22, bold=True, color=(31, 78, 121))
+    note = doc.add_paragraph()
+    note.paragraph_format.space_after = Pt(14)
+    set_font(note.add_run("说明：自动识别结果仅用于辅助定位。数值、币种、单位和证据原页均应人工复核。"), size=9, color=(89, 89, 89))
+
     for result in results:
-        doc.add_heading(f"{result.index:03d}  {result.company} - 第 {result.page_number} 页", level=1)
+        heading = doc.add_paragraph()
+        heading.paragraph_format.space_before = Pt(10)
+        heading.paragraph_format.space_after = Pt(6)
+        set_font(
+            heading.add_run(f"{result.index:03d}  {result.company} - 第 {result.page_number} 页"),
+            size=14, bold=True, color=(31, 78, 121),
+        )
         table = doc.add_table(rows=0, cols=2)
         table.style = "Table Grid"
+        table.autofit = False
+        table.alignment = WD_TABLE_ALIGNMENT.LEFT
         items = [
             ("指标", result.indicator), ("数值候选", result.value_candidate),
+            ("币种（原文）", result.currency), ("金额单位（原文）", result.amount_unit),
+            ("数值所属年份", result.value_year),
             ("来源文件", result.source_filename), ("证据文件", result.evidence_filename),
             ("命中词", result.matched_terms), ("匹配分", str(result.score)),
             ("证据片段", result.excerpt),
         ]
         for label, value in items:
             cells = table.add_row().cells
-            cells[0].text, cells[1].text = label, value
+            cells[0].width, cells[1].width = Inches(1.35), Inches(5.25)
+            for cell in cells:
+                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                tc_mar = cell._tc.get_or_add_tcPr().first_child_found_in("w:tcMar")
+                if tc_mar is None:
+                    tc_mar = OxmlElement("w:tcMar")
+                    cell._tc.get_or_add_tcPr().append(tc_mar)
+                for edge in ("top", "start", "bottom", "end"):
+                    node = OxmlElement(f"w:{edge}")
+                    node.set(qn("w:w"), "100")
+                    node.set(qn("w:type"), "dxa")
+                    tc_mar.append(node)
+            shade = OxmlElement("w:shd")
+            shade.set(qn("w:fill"), "E8EEF5")
+            cells[0]._tc.get_or_add_tcPr().append(shade)
+            cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
+            cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
+            set_font(cells[0].paragraphs[0].add_run(label), size=9, bold=True, color=(31, 78, 121))
+            set_font(cells[1].paragraphs[0].add_run(str(value)), size=9)
     output = BytesIO()
     doc.save(output)
     return output.getvalue()
