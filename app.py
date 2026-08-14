@@ -2,8 +2,9 @@ import streamlit as st
 
 from evidence_pdf.extractor import extract_evidence
 from evidence_pdf.exporters import build_export_bundle
+from evidence_pdf.indicators import alias_preview, resolve_indicator
 from evidence_pdf.parser import PDFParseError, read_pages
-from evidence_pdf.utils import infer_meta, split_terms
+from evidence_pdf.utils import infer_meta
 
 
 st.set_page_config(page_title="EvidencePDF", page_icon="🔎", layout="wide")
@@ -12,10 +13,9 @@ st.caption("批量定位目标字段，保留原始证据页，并生成 Excel /
 
 with st.sidebar:
     st.header("提取设置")
-    raw_terms = st.text_area(
-        "目标字段 / 同义词",
-        "研发投入, 研发费用, R&D expenditure, research and development expenses",
-        help="用逗号、分号或换行分隔。更具体的词通常能减少误报。",
+    indicator_query = st.text_input(
+        "目标指标", "研发投入",
+        help="只需输入一个指标名称。已内置的指标会自动扩展中英文及其他语言近义词。",
     )
     max_pages = st.slider("每份文件最多保留证据页", 1, 10, 3)
     min_score = st.slider("最低匹配分", 1.0, 10.0, 2.0, 0.25)
@@ -28,10 +28,11 @@ with st.sidebar:
 uploads = st.file_uploader("上传企业文档 PDF", type=["pdf"], accept_multiple_files=True)
 
 if st.button("开始提取", type="primary", disabled=not uploads, use_container_width=True):
-    terms = split_terms(raw_terms)
-    if not terms:
+    if not indicator_query.strip():
         st.error("请至少输入一个目标字段。")
         st.stop()
+    indicator_spec = resolve_indicator(indicator_query)
+    st.info(f"本次按“{indicator_spec.canonical}”提取；系统自动使用：{alias_preview(indicator_spec)}…")
 
     all_results, source_pdfs, warnings = [], {}, []
     next_index = 1
@@ -43,9 +44,9 @@ if st.button("开始提取", type="primary", disabled=not uploads, use_container
             pages = read_pages(pdf_bytes)
             if pages and sum(bool(page.text.strip()) for page in pages) / len(pages) < 0.2:
                 warnings.append(f"{upload.name}：大部分页面没有可提取文本，可能是扫描件，需要 OCR。")
-            meta = infer_meta(upload.name, company, year, document_type)
+            meta = infer_meta(upload.name, pages, company, year, document_type)
             results = extract_evidence(
-                pages, terms, meta, max_pages=max_pages,
+                pages, indicator_spec, meta, max_pages=max_pages,
                 min_score=min_score, start_index=next_index,
             )
             if not results:
@@ -60,7 +61,7 @@ if st.button("开始提取", type="primary", disabled=not uploads, use_container
     for warning in warnings:
         st.warning(warning)
     if not all_results:
-        st.info("没有可导出的结果。请检查 PDF 是否含文本层，或补充同义词、降低匹配阈值。")
+        st.info("没有可导出的结果。请检查 PDF 是否含文本层，或降低匹配阈值；未内置的指标目前只做精确词检索。")
         st.stop()
 
     files = build_export_bundle(all_results, source_pdfs)
@@ -75,7 +76,8 @@ if "evidence_results" in st.session_state:
     st.dataframe(
         [{
             "序号": r.index, "企业": r.company, "指标": r.indicator,
-            "数值候选": r.value_candidate, "来源": r.source_filename,
+            "数值候选": r.value_candidate, "币种": r.currency, "金额单位": r.amount_unit,
+            "所属年份": r.value_year, "来源": r.source_filename,
             "页码": r.page_number, "匹配分": r.score, "命中词": r.matched_terms,
         } for r in results],
         hide_index=True, use_container_width=True,
