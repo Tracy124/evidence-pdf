@@ -25,9 +25,8 @@ def make_pdf() -> bytes:
 def test_end_to_end_pipeline():
     pdf = make_pdf()
     pages = read_pages(pdf)
-    meta = infer_meta("ACME_2024_Annual_Report.pdf")
-    terms = split_terms("研发投入, R&D expenditure")
-    results = extract_evidence(pages, terms, meta)
+    meta = infer_meta("ACME_2024_Annual_Report.pdf", pages)
+    results = extract_evidence(pages, "研发投入", meta)
 
     assert len(results) == 1
     assert results[0].page_number == 2
@@ -40,7 +39,7 @@ def test_end_to_end_pipeline():
 
     workbook = load_workbook(BytesIO(files["提取结果.xlsx"]))
     assert workbook.active.max_row == 2
-    assert workbook.active["F2"].value == 2
+    assert workbook.active["I2"].value == 2
 
     with ZipFile(BytesIO(files["证据提取结果包.zip"])) as archive:
         names = archive.namelist()
@@ -51,5 +50,28 @@ def test_end_to_end_pipeline():
 def test_empty_and_scanned_like_pages_do_not_match():
     pdf = make_pdf()
     pages = read_pages(pdf)
-    results = extract_evidence(pages, ["not present"], infer_meta("ACME_2024.pdf"))
+    results = extract_evidence(pages, "not present", infer_meta("ACME_2024.pdf", pages))
     assert results == []
+
+
+def test_content_metadata_and_false_positive_rejection():
+    from evidence_pdf.models import PageText
+
+    pages = [
+        PageText(1, "宁德时代新能源科技股份有限公司\n2025年年度报告\n2026年3月"),
+        PageText(20, "持续高强度的研发投入。公司拥有及申请的国内外专利总数达 54,538 项。"),
+        PageText(30, "(3)近三年公司研发投入金额及占营业收入的比例\n"
+                     "项目 2025年 2024年 2023年\n"
+                     "研发投入金额(千元) 22,146,581 18,606,756 18,356,108"),
+    ]
+    meta = infer_meta("20260310105829_random.pdf", pages)
+    results = extract_evidence(pages, "研发投入", meta)
+
+    assert meta.company == "宁德时代新能源科技股份有限公司"
+    assert meta.year == "2025"
+    assert meta.language == "中文"
+    assert len(results) == 1
+    assert results[0].page_number == 30
+    assert results[0].value_candidate == "22,146,581"
+    assert results[0].amount_unit == "千元"
+    assert results[0].currency == "原文未注明"
